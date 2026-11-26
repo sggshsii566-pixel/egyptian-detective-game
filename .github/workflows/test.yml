@@ -1,0 +1,44 @@
+name: detective
+on:
+  workflow_dispatch:
+  push:
+    paths: ['go.txt']
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: mkdir w && cat parts/b64.* | base64 -d > bundle.tgz && echo "aa5a616873f7b3b11ba15ed97fc5eb2d993c872e4521b80e093fac2738a159a1  bundle.tgz" | sha256sum -c - && tar xzf bundle.tgz -C w
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: '8.7' }
+      - name: build
+        env:
+          KS_B64: ${{ secrets.KS_B64 }}
+          KS_PASS: ${{ secrets.KS_PASS }}
+        run: |
+          echo "$KS_B64" | base64 -d > "$GITHUB_WORKSPACE/w/ks.jks"
+          export KS_FILE="$GITHUB_WORKSPACE/w/ks.jks"
+          cd w && gradle :app:assembleRelease --no-daemon --stacktrace
+          rm -f "$KS_FILE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: w/app/build/outputs/apk/release/*.apk
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: apk }
+      - name: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv app-release.apk detective-1.0.0.apk
+          sha256sum detective-1.0.0.apk > SHA256.txt
+          gh release create detective-run${{ github.run_number }} detective-1.0.0.apk SHA256.txt --repo ${{ github.repository }} --prerelease --title "Egyptian Detective v${{ github.run_number }} UNTESTED on device" --notes "Android app wrapping the Egyptian Detective game. Compiles and signs in CI. Not yet tested on a phone."
